@@ -1,0 +1,2 @@
+comment -> "//" ( !'\r' !'\n' ANY )*
+whitespace -> ( ' ' | '\t' | '\r' | '\n' | comment )*

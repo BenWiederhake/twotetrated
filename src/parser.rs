@@ -3,12 +3,12 @@ use winnow::prelude::*;
 use winnow::combinator::alt;
 use winnow::combinator::repeat;
 //use winnow::combinator::seq;
+use winnow::Result;
 use winnow::error::StrContext;
 use winnow::error::StrContextValue;
-use winnow::Result;
 use winnow::stream::LocatingSlice;
-use winnow::token::one_of;
 use winnow::token::none_of;
+use winnow::token::one_of;
 //use winnow::token::take_while;
 
 type In<'a> = LocatingSlice<&'a str>;
@@ -41,11 +41,12 @@ fn comment(input: &mut In) -> Result<()> {
 }
 
 fn whitespace(input: &mut In) -> Result<()> {
-    // GRAMMAR: whitespace -> ( ' ' | '\t' | '\r' | '\n' | comment ) *
-    repeat::<_, _, (), _, _>(0..,
-        alt((one_of([' ', '\t', '\r', '\n']).value(()), comment))
-    ).parse_next(input)?;
-    Ok(())
+    // GRAMMAR: whitespace -> ( ' ' | '\t' | '\r' | '\n' | comment )*
+    repeat::<_, _, (), _, _>(
+        0..,
+        alt((one_of([' ', '\t', '\r', '\n']).value(()), comment)),
+    )
+    .parse_next(input)
 }
 
 #[cfg(test)]
@@ -174,5 +175,4 @@ mod tests {
         assert_eq!(output, ());
         assert_eq!(*input, "x\rtrail");
     }
-
 }
