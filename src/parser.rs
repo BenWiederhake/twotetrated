@@ -1,0 +1,178 @@
+use winnow::prelude::*;
+
+use winnow::combinator::alt;
+use winnow::combinator::repeat;
+//use winnow::combinator::seq;
+use winnow::error::StrContext;
+use winnow::error::StrContextValue;
+use winnow::Result;
+use winnow::stream::LocatingSlice;
+use winnow::token::one_of;
+use winnow::token::none_of;
+//use winnow::token::take_while;
+
+type In<'a> = LocatingSlice<&'a str>;
+
+// TODO: Interesting tools:
+// '0'.parse_next(), "foo".parse_next
+//       one_of(('0'..='9', 'a'..='f', 'A'..='F')).parse_next(input)
+// use winnow::ascii::hex_digit1;
+// dispatch with known prefixes
+// empty() can help
+// alt(ernatives)
+// pub(crate) fn hex_color(input: &mut &str) -> Result<Color> {
+//     seq!(Color {
+//         _: '#',
+//         red: hex_primary,
+//         green: hex_primary,
+//         blue: hex_primary
+//     })
+//     .parse_next(input)
+// }
+
+fn comment(input: &mut In) -> Result<()> {
+    // GRAMMAR: comment -> "//" ( !'\r' !'\n' ANY )*
+    // Intentional: Permit missing trailing \r / \n at EOF
+    "//".context(StrContext::Label("comment marker"))
+        .context(StrContext::Expected(StrContextValue::Description("//")))
+        .parse_next(input)?;
+    repeat::<_, _, (), _, _>(0.., none_of(['\r', '\n'])).parse_next(input)?;
+    Ok(())
+}
+
+fn whitespace(input: &mut In) -> Result<()> {
+    // GRAMMAR: whitespace -> ( ' ' | '\t' | '\r' | '\n' | comment ) *
+    repeat::<_, _, (), _, _>(0..,
+        alt((one_of([' ', '\t', '\r', '\n']).value(()), comment))
+    ).parse_next(input)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_comment_minimal() {
+        let mut input = In::new("//");
+        let output = comment(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "");
+    }
+
+    #[test]
+    fn test_comment_longer() {
+        let mut input = In::new("// hello // world!! \\r\\n lol still the same line");
+        let output = comment(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "");
+    }
+
+    #[test]
+    fn test_comment_tail() {
+        let mut input = In::new("// hi\r\n");
+        let output = comment(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "\r\n");
+    }
+
+    #[test]
+    fn test_comment_incomplete() {
+        let input = In::new("/ b");
+        let actual_err = comment.parse(input).expect_err("parse succeeded?!");
+        assert_eq!(actual_err.char_span(), 0..1);
+        let expected_err = "/ b\n^\ninvalid comment marker\nexpected //";
+        assert_eq!(actual_err.to_string(), expected_err);
+    }
+
+    #[test]
+    fn test_comment_incomplete_minimal() {
+        let input = In::new("/");
+        let actual_err = comment.parse(input).expect_err("parse succeeded?!");
+        assert_eq!(actual_err.char_span(), 0..1);
+        let expected_err = "/\n^\ninvalid comment marker\nexpected //";
+        assert_eq!(actual_err.to_string(), expected_err);
+    }
+
+    #[test]
+    fn test_comment_incomplete_empty() {
+        let input = In::new("");
+        let actual_err = comment.parse(input).expect_err("parse succeeded?!");
+        assert_eq!(actual_err.char_span(), 0..0);
+        let expected_err = "\n^\ninvalid comment marker\nexpected //";
+        assert_eq!(actual_err.to_string(), expected_err);
+    }
+
+    #[test]
+    fn test_whitespace_none() {
+        let mut input = In::new("");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "");
+    }
+
+    #[test]
+    fn test_whitespace_pseudofail() {
+        let mut input = In::new("x");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "x");
+    }
+
+    #[test]
+    fn test_whitespace_minimal_space() {
+        let mut input = In::new(" x");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "x");
+    }
+
+    #[test]
+    fn test_whitespace_minimal_t() {
+        let mut input = In::new("\tx");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "x");
+    }
+
+    #[test]
+    fn test_whitespace_minimal_r() {
+        let mut input = In::new("\rx");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "x");
+    }
+
+    #[test]
+    fn test_whitespace_minimal_n() {
+        let mut input = In::new("\nx");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "x");
+    }
+
+    #[test]
+    fn test_whitespace_minimal_crlf() {
+        let mut input = In::new("\r\nx");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "x");
+    }
+
+    #[test]
+    fn test_whitespace_comment() {
+        let mut input = In::new("// holy crap\r\nx");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "x");
+    }
+
+    #[test]
+    fn test_whitespace_many() {
+        let mut input = In::new(" // hello\n\t// worl\nx\rtrail");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "x\rtrail");
+    }
+
+}
