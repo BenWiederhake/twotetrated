@@ -1,2 +1,3 @@
 comment -> "//" ( !'\r' !'\n' ANY )*
 whitespace -> ( ' ' | '\t' | '\r' | '\n' | comment )*
+word -> ( ALPHA | '_' ) ( ALPHA | NUM | '_' )*

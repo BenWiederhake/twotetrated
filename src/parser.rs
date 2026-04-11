@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use winnow::prelude::*;
 
 use winnow::combinator::alt;
@@ -9,7 +11,7 @@ use winnow::error::StrContextValue;
 use winnow::stream::LocatingSlice;
 use winnow::token::none_of;
 use winnow::token::one_of;
-//use winnow::token::take_while;
+use winnow::token::take_while;
 
 type In<'a> = LocatingSlice<&'a str>;
 
@@ -46,6 +48,21 @@ fn whitespace(input: &mut In) -> Result<()> {
         0..,
         alt((one_of([' ', '\t', '\r', '\n']).value(()), comment)),
     )
+    .parse_next(input)
+}
+
+fn word<'s>(input: &mut In<'s>) -> Result<(&'s str, Range<usize>)> {
+    // Heavily inspired by https://docs.rs/winnow/latest/winnow/_topic/language/index.html#identifiers
+    // GRAMMAR: word -> ( ALPHA | '_' ) ( ALPHA | NUM | '_' )*
+    (
+        one_of(|c: char| c.is_alpha() || c == '_')
+            .context(StrContext::Label("identifier start"))
+            .context(StrContext::Expected(StrContextValue::Description("underscore")))
+            .context(StrContext::Expected(StrContextValue::Description("any letter"))),
+        take_while(0.., |c: char| c.is_alphanum() || c == '_')
+    )
+    .take()
+    .with_span()
     .parse_next(input)
 }
 
@@ -175,4 +192,77 @@ mod tests {
         assert_eq!(output, ());
         assert_eq!(*input, "x\rtrail");
     }
+
+    #[test]
+    fn test_word_none() {
+        let input = In::new("");
+        let actual_err = word.parse(input).expect_err("parse succeeded?!");
+        assert_eq!(actual_err.char_span(), 0..0);
+        let expected_err = "\n^\ninvalid identifier start\nexpected underscore, any letter";
+        assert_eq!(actual_err.to_string(), expected_err);
+    }
+
+    #[test]
+    fn test_word_digit() {
+        let input = In::new("5");
+        let actual_err = word.parse(input).expect_err("parse succeeded?!");
+        assert_eq!(actual_err.char_span(), 0..1);
+        let expected_err = "5\n^\ninvalid identifier start\nexpected underscore, any letter";
+        assert_eq!(actual_err.to_string(), expected_err);
+    }
+
+    #[test]
+    fn test_word_minimal_alpha() {
+        let mut input = In::new("a b c");
+        let output = word(&mut input).expect("parse failed");
+        assert_eq!(output, ("a", 0..1));
+        assert_eq!(*input, " b c");
+    }
+
+    #[test]
+    fn test_word_minimal_underscore() {
+        let mut input = In::new("_ _ _");
+        let output = word(&mut input).expect("parse failed");
+        assert_eq!(output, ("_", 0..1));
+        assert_eq!(*input, " _ _");
+    }
+
+    #[test]
+    fn test_word_minimal_alpha_digit() {
+        let mut input = In::new("r7+r8");
+        let output = word(&mut input).expect("parse failed");
+        assert_eq!(output, ("r7", 0..2));
+        assert_eq!(*input, "+r8");
+    }
+
+    #[test]
+    fn test_word_short() {
+        let mut input = In::new("hello world");
+        let output = word(&mut input).expect("parse failed");
+        assert_eq!(output, ("hello", 0..5));
+        assert_eq!(*input, " world");
+    }
+
+    #[test]
+    fn test_word_complex() {
+        let mut input = In::new("ComplicatedThing1234_XXXZZ.lol()");
+        let output = word(&mut input).expect("parse failed");
+        assert_eq!(output, ("ComplicatedThing1234_XXXZZ", 0..26));
+        assert_eq!(*input, ".lol()");
+    }
+
+    #[test]
+    fn test_word_space_word() {
+        let mut input = In::new("hello world");
+        let output = word(&mut input).expect("parse failed");
+        assert_eq!(output, ("hello", 0..5));
+        assert_eq!(*input, " world");
+        let output = whitespace(&mut input).expect("parse failed");
+        assert_eq!(output, ());
+        assert_eq!(*input, "world");
+        let output = word(&mut input).expect("parse failed");
+        assert_eq!(output, ("world", 6..11));
+        assert_eq!(*input, "");
+    }
+
 }
