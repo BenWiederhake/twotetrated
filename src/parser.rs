@@ -13,11 +13,19 @@ use winnow::error::ContextError;
 use winnow::error::StrContext;
 use winnow::error::StrContextValue;
 use winnow::stream::LocatingSlice;
+use winnow::stream::Stateful;
 use winnow::token::none_of;
 use winnow::token::one_of;
 use winnow::token::take_while;
 
-type In<'a> = LocatingSlice<&'a str>;
+type In<'is> = Stateful<LocatingSlice<&'is str>, &'is str>;
+
+fn stream_from<'is>(code: &'is str, filename: &'is str) -> In<'is> {
+    In {
+        input: LocatingSlice::new(code),
+        state: filename,
+    }
+}
 
 // TODO: Interesting tools:
 // '0'.parse_next(), "foo".parse_next
@@ -142,31 +150,34 @@ mod tests {
 
     #[test]
     fn test_comment_minimal() {
-        let mut input = In::new("//");
+        let mut input = stream_from("//", "<input>");
         let output = comment(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "");
+        assert_eq!(**input, "");
     }
 
     #[test]
     fn test_comment_longer() {
-        let mut input = In::new("// hello // world!! \\r\\n lol still the same line");
+        let mut input = stream_from(
+            "// hello // world!! \\r\\n lol still the same line",
+            "<input>",
+        );
         let output = comment(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "");
+        assert_eq!(**input, "");
     }
 
     #[test]
     fn test_comment_tail() {
-        let mut input = In::new("// hi\r\n");
+        let mut input = stream_from("// hi\r\n", "<input>");
         let output = comment(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "\r\n");
+        assert_eq!(**input, "\r\n");
     }
 
     #[test]
     fn test_comment_incomplete() {
-        let input = In::new("/ b");
+        let input = stream_from("/ b", "<input>");
         let actual_err = comment.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
         let expected_err = "/ b\n^\ninvalid comment marker\nexpected //";
@@ -175,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_comment_incomplete_minimal() {
-        let input = In::new("/");
+        let input = stream_from("/", "<input>");
         let actual_err = comment.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
         let expected_err = "/\n^\ninvalid comment marker\nexpected //";
@@ -184,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_comment_incomplete_empty() {
-        let input = In::new("");
+        let input = stream_from("", "<input>");
         let actual_err = comment.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..0);
         let expected_err = "\n^\ninvalid comment marker\nexpected //";
@@ -193,79 +204,79 @@ mod tests {
 
     #[test]
     fn test_whitespace_none() {
-        let mut input = In::new("");
+        let mut input = stream_from("", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "");
+        assert_eq!(**input, "");
     }
 
     #[test]
     fn test_whitespace_pseudofail() {
-        let mut input = In::new("x");
+        let mut input = stream_from("x", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "x");
+        assert_eq!(**input, "x");
     }
 
     #[test]
     fn test_whitespace_minimal_space() {
-        let mut input = In::new(" x");
+        let mut input = stream_from(" x", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "x");
+        assert_eq!(**input, "x");
     }
 
     #[test]
     fn test_whitespace_minimal_t() {
-        let mut input = In::new("\tx");
+        let mut input = stream_from("\tx", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "x");
+        assert_eq!(**input, "x");
     }
 
     #[test]
     fn test_whitespace_minimal_r() {
-        let mut input = In::new("\rx");
+        let mut input = stream_from("\rx", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "x");
+        assert_eq!(**input, "x");
     }
 
     #[test]
     fn test_whitespace_minimal_n() {
-        let mut input = In::new("\nx");
+        let mut input = stream_from("\nx", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "x");
+        assert_eq!(**input, "x");
     }
 
     #[test]
     fn test_whitespace_minimal_crlf() {
-        let mut input = In::new("\r\nx");
+        let mut input = stream_from("\r\nx", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "x");
+        assert_eq!(**input, "x");
     }
 
     #[test]
     fn test_whitespace_comment() {
-        let mut input = In::new("// holy crap\r\nx");
+        let mut input = stream_from("// holy crap\r\nx", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "x");
+        assert_eq!(**input, "x");
     }
 
     #[test]
     fn test_whitespace_many() {
-        let mut input = In::new(" // hello\n\t// worl\nx\rtrail");
+        let mut input = stream_from(" // hello\n\t// worl\nx\rtrail", "<input>");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "x\rtrail");
+        assert_eq!(**input, "x\rtrail");
     }
 
     #[test]
     fn test_word_none() {
-        let input = In::new("");
+        let input = stream_from("", "<input>");
         let actual_err = word.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..0);
         let expected_err = "\n^\ninvalid identifier start\nexpected underscore, any letter";
@@ -274,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_word_digit() {
-        let input = In::new("5");
+        let input = stream_from("5", "<input>");
         let actual_err = word.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
         let expected_err = "5\n^\ninvalid identifier start\nexpected underscore, any letter";
@@ -283,93 +294,93 @@ mod tests {
 
     #[test]
     fn test_word_minimal_alpha() {
-        let mut input = In::new("a b c");
+        let mut input = stream_from("a b c", "<input>");
         let output = word(&mut input).expect("parse failed");
         assert_eq!(output, ("a", 0..1));
-        assert_eq!(*input, " b c");
+        assert_eq!(**input, " b c");
     }
 
     #[test]
     fn test_word_minimal_underscore() {
-        let mut input = In::new("_ _ _");
+        let mut input = stream_from("_ _ _", "<input>");
         let output = word(&mut input).expect("parse failed");
         assert_eq!(output, ("_", 0..1));
-        assert_eq!(*input, " _ _");
+        assert_eq!(**input, " _ _");
     }
 
     #[test]
     fn test_word_minimal_alpha_digit() {
-        let mut input = In::new("r7+r8");
+        let mut input = stream_from("r7+r8", "<input>");
         let output = word(&mut input).expect("parse failed");
         assert_eq!(output, ("r7", 0..2));
-        assert_eq!(*input, "+r8");
+        assert_eq!(**input, "+r8");
     }
 
     #[test]
     fn test_word_short() {
-        let mut input = In::new("hello world");
+        let mut input = stream_from("hello world", "<input>");
         let output = word(&mut input).expect("parse failed");
         assert_eq!(output, ("hello", 0..5));
-        assert_eq!(*input, " world");
+        assert_eq!(**input, " world");
     }
 
     #[test]
     fn test_word_complex() {
-        let mut input = In::new("ComplicatedThing1234_XXXZZ.lol()");
+        let mut input = stream_from("ComplicatedThing1234_XXXZZ.lol()", "<input>");
         let output = word(&mut input).expect("parse failed");
         assert_eq!(output, ("ComplicatedThing1234_XXXZZ", 0..26));
-        assert_eq!(*input, ".lol()");
+        assert_eq!(**input, ".lol()");
     }
 
     #[test]
     fn test_word_space_word() {
-        let mut input = In::new("hello world");
+        let mut input = stream_from("hello world", "<input>");
         let output = word(&mut input).expect("parse failed");
         assert_eq!(output, ("hello", 0..5));
-        assert_eq!(*input, " world");
+        assert_eq!(**input, " world");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
-        assert_eq!(*input, "world");
+        assert_eq!(**input, "world");
         let output = word(&mut input).expect("parse failed");
         assert_eq!(output, ("world", 6..11));
-        assert_eq!(*input, "");
+        assert_eq!(**input, "");
     }
 
     #[test]
     fn test_numhex_minimal_digit() {
-        let mut input = In::new("9yooo");
+        let mut input = stream_from("9yooo", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
         assert_eq!(output, (9, 0..1));
-        assert_eq!(*input, "yooo");
+        assert_eq!(**input, "yooo");
     }
 
     #[test]
     fn test_numhex_minimal_hexit() {
-        let mut input = In::new("ayooo");
+        let mut input = stream_from("ayooo", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
         assert_eq!(output, (10, 0..1));
-        assert_eq!(*input, "yooo");
+        assert_eq!(**input, "yooo");
     }
 
     #[test]
     fn test_numhex_max() {
-        let mut input = In::new("ffffun!");
+        let mut input = stream_from("ffffun!", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
         assert_eq!(output, (65535, 0..4));
-        assert_eq!(*input, "un!");
+        assert_eq!(**input, "un!");
     }
 
     #[test]
     fn test_numhex_several_zero() {
-        let mut input = In::new("00");
+        let mut input = stream_from("00", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
         assert_eq!(output, (0, 0..2));
-        assert_eq!(*input, "");
+        assert_eq!(**input, "");
     }
 
     #[test]
     fn test_numhex_too_long() {
-        let input = In::new("12345");
+        let input = stream_from("12345", "<input>");
         let actual_err = number_hex.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
         let expected_err = "12345\n^\ninvalid hexadecimal number with at most 4 hexits\nexpected hexit (i.e. 0-9, a-f, A-F), underscore (followed by a hexit)";
@@ -378,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_numhex_too_long_zero() {
-        let input = In::new("00000");
+        let input = stream_from("00000", "<input>");
         let actual_err = number_hex.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
         let expected_err = "00000\n^\ninvalid hexadecimal number with at most 4 hexits\nexpected hexit (i.e. 0-9, a-f, A-F), underscore (followed by a hexit)";
@@ -387,7 +398,7 @@ mod tests {
 
     #[test]
     fn test_numhex_empty() {
-        let input = In::new("");
+        let input = stream_from("", "<input>");
         let actual_err = number_hex.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..0);
         let expected_err =
@@ -397,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_numhex_invalid() {
-        let input = In::new("g");
+        let input = stream_from("g", "<input>");
         let actual_err = number_hex.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
         let expected_err =
@@ -407,7 +418,7 @@ mod tests {
 
     #[test]
     fn test_numhex_invalid_tail() {
-        let input = In::new("efgh");
+        let input = stream_from("efgh", "<input>");
         let actual_err = number_hex.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 2..3);
         // Message is only bad because it matches against eof() under the hood, so can't inject anything
@@ -417,15 +428,15 @@ mod tests {
 
     #[test]
     fn test_numhex_max_underscores() {
-        let mut input = In::new("f_a_c_e+");
+        let mut input = stream_from("f_a_c_e+", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
         assert_eq!(output, (0xFACE, 0..7));
-        assert_eq!(*input, "+");
+        assert_eq!(**input, "+");
     }
 
     #[test]
     fn test_numhex_double_underscore() {
-        let input = In::new("12__3 * 9");
+        let input = stream_from("12__3 * 9", "<input>");
         let actual_err = number_hex.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 3..4);
         // Message is only bad because it matches against eof() under the hood, so can't inject anything
@@ -435,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_numhex_leading_underscore() {
-        let input = In::new("_eee");
+        let input = stream_from("_eee", "<input>");
         let actual_err = number_hex.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
         // Message is only bad because it matches against eof() under the hood, so can't inject anything
@@ -446,15 +457,15 @@ mod tests {
 
     #[test]
     fn test_number_hex_minimal() {
-        let mut input = In::new("0x1;");
+        let mut input = stream_from("0x1;", "<input>");
         let output = number(&mut input).expect("parse failed");
         assert_eq!(output, (1, 0..3));
-        assert_eq!(*input, ";");
+        assert_eq!(**input, ";");
     }
 
     #[test]
     fn test_number_invalid_prefix() {
-        let input = In::new("0p4");
+        let input = stream_from("0p4", "<input>");
         let actual_err = number.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
         let expected_err = "0p4\n^\ninvalid number prefix\nexpected 0x (FIXME)";
