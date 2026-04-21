@@ -5,6 +5,7 @@ use winnow::prelude::*;
 use winnow::combinator::alt;
 use winnow::combinator::cut_err;
 use winnow::combinator::peek;
+use winnow::combinator::preceded;
 use winnow::combinator::repeat;
 //use winnow::combinator::seq;
 use winnow::Result;
@@ -104,6 +105,21 @@ fn number_hex(input: &mut In) -> ModalResult<(u16, Range<usize>)> {
     .context(StrContext::Expected(StrContextValue::Description("hexit (i.e. 0-9, a-f, A-F)")))
     .context(StrContext::Expected(StrContextValue::Description("underscore (followed by a hexit)")))
     .with_span()
+    .parse_next(input)
+}
+
+fn number(input: &mut In) -> ModalResult<(u16, Range<usize>)> {
+    // GRAMMAR: number -> "0x" number_hex  // FIXME: More prefixes
+    preceded(
+        "0x"
+        .context(StrContext::Label("number prefix"))
+        .context(StrContext::Expected(StrContextValue::Description("0x (FIXME)"))),
+        number_hex
+    )
+    // number_hex() indicates the span of hexadecimal digits,
+    // but number() wants to indicate the entire number including prefix:
+    .with_span()
+    .map(|with_wrong_span| (with_wrong_span.0.0, with_wrong_span.1))
     .parse_next(input)
 }
 
@@ -412,4 +428,20 @@ mod tests {
         assert_eq!(actual_err.to_string(), expected_err);
     }
 
+    #[test]
+    fn test_number_hex_minimal() {
+        let mut input = In::new("0x1;");
+        let output = number(&mut input).expect("parse failed");
+        assert_eq!(output, (1, 0..3));
+        assert_eq!(*input, ";");
+    }
+
+    #[test]
+    fn test_number_invalid_prefix() {
+        let input = In::new("0p4");
+        let actual_err = number.parse(input).expect_err("parse succeeded?!");
+        assert_eq!(actual_err.char_span(), 0..1);
+        let expected_err = "0p4\n^\ninvalid number prefix\nexpected 0x (FIXME)";
+        assert_eq!(actual_err.to_string(), expected_err);
+    }
 }
