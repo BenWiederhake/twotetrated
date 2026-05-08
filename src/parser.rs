@@ -6,6 +6,7 @@ use winnow::combinator::alt;
 use winnow::combinator::cut_err;
 use winnow::combinator::peek;
 use winnow::combinator::preceded;
+use winnow::combinator::impls::WithSpan;
 use winnow::combinator::repeat;
 //use winnow::combinator::seq;
 use winnow::Result;
@@ -18,12 +19,55 @@ use winnow::token::none_of;
 use winnow::token::one_of;
 use winnow::token::take_while;
 
+use crate::ast::FileSpan;
+
 type In<'is> = Stateful<LocatingSlice<&'is str>, &'is str>;
 
 fn stream_from<'is>(code: &'is str, filename: &'is str) -> In<'is> {
     In {
         input: LocatingSlice::new(code),
         state: filename,
+    }
+}
+
+struct WithFileSpan<'is, F, O, E>
+where
+    F: Parser<In<'is>, (O, Range<usize>), E>,
+{
+    parser: F, // WithSpan
+    marker: core::marker::PhantomData<(In<'is>, O, E)>,
+}
+
+impl<'is, F, O, E> Parser<In<'is>, (O, FileSpan<'is>), E> for WithFileSpan<'is, F, O, E>
+where
+    F: Parser<In<'is>, (O, Range<usize>), E>,
+{
+    // TODO: Decide whether to mark as #[inline] (it's inline in WithSpan)
+    fn parse_next(&mut self, input: &mut In<'is>) -> Result<(O, FileSpan<'is>), E> {
+        //let start = input.current_token_start();
+        self.parser.parse_next(input).map(move |output_tuple| {
+            let (output, char_span) = output_tuple;
+            (
+                output,
+                FileSpan {
+                    source: input.state,
+                    chars: char_span,
+                },
+            )
+        })
+    }
+}
+
+trait WithFileSpanExt<'is, O, E, Base>
+where
+    Base: Sized + Parser<In<'is>, O, E>,
+{
+    fn with_file_span(self) -> WithFileSpan<'is, WithSpan<Base, In<'is>, O, E>, O, E>;
+}
+
+impl<'is, O, E, T: Sized + Parser<In<'is>, O, E>> WithFileSpanExt<'is, O, E, T> for T {
+    fn with_file_span(self) -> WithFileSpan<'is, WithSpan<Self, In<'is>, O, E>, O, E> {
+        WithFileSpan { parser: self.with_span(), marker: Default::default() }
     }
 }
 
@@ -63,7 +107,7 @@ fn whitespace(input: &mut In) -> Result<()> {
     .parse_next(input)
 }
 
-fn word<'s>(input: &mut In<'s>) -> Result<(&'s str, Range<usize>)> {
+fn word<'s>(input: &mut In<'s>) -> Result<(&'s str, FileSpan<'s>)> {
     // Heavily inspired by https://docs.rs/winnow/latest/winnow/_topic/language/index.html#identifiers
     // GRAMMAR: word -> ( ALPHA | '_' ) ( ALPHA | NUM | '_' )*
     (
@@ -78,7 +122,7 @@ fn word<'s>(input: &mut In<'s>) -> Result<(&'s str, Range<usize>)> {
         take_while(0.., |c: char| c.is_alphanum() || c == '_'),
     )
         .take()
-        .with_span()
+        .with_file_span()
         .parse_next(input)
 }
 
@@ -296,7 +340,7 @@ mod tests {
     fn test_word_minimal_alpha() {
         let mut input = stream_from("a b c", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("a", 0..1));
+        assert_eq!(output, ("a", FileSpan::new("<input>", 0..1)));
         assert_eq!(**input, " b c");
     }
 
@@ -304,7 +348,7 @@ mod tests {
     fn test_word_minimal_underscore() {
         let mut input = stream_from("_ _ _", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("_", 0..1));
+        assert_eq!(output, ("_", FileSpan::new("<input>", 0..1)));
         assert_eq!(**input, " _ _");
     }
 
@@ -312,7 +356,7 @@ mod tests {
     fn test_word_minimal_alpha_digit() {
         let mut input = stream_from("r7+r8", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("r7", 0..2));
+        assert_eq!(output, ("r7", FileSpan::new("<input>", 0..2)));
         assert_eq!(**input, "+r8");
     }
 
@@ -320,7 +364,7 @@ mod tests {
     fn test_word_short() {
         let mut input = stream_from("hello world", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("hello", 0..5));
+        assert_eq!(output, ("hello", FileSpan::new("<input>", 0..5)));
         assert_eq!(**input, " world");
     }
 
@@ -328,7 +372,7 @@ mod tests {
     fn test_word_complex() {
         let mut input = stream_from("ComplicatedThing1234_XXXZZ.lol()", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("ComplicatedThing1234_XXXZZ", 0..26));
+        assert_eq!(output, ("ComplicatedThing1234_XXXZZ", FileSpan::new("<input>", 0..26)));
         assert_eq!(**input, ".lol()");
     }
 
@@ -336,13 +380,13 @@ mod tests {
     fn test_word_space_word() {
         let mut input = stream_from("hello world", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("hello", 0..5));
+        assert_eq!(output, ("hello", FileSpan::new("<input>", 0..5)));
         assert_eq!(**input, " world");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
         assert_eq!(**input, "world");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("world", 6..11));
+        assert_eq!(output, ("world", FileSpan::new("<input>", 6..11)));
         assert_eq!(**input, "");
     }
 
