@@ -5,3 +5,4 @@ HEXDIGIT -> '0'..'9' | 'a'..'f' | 'A'..'F'
 number_hex -> HEXDIGIT ( HEXDIGIT | ( '_' &HEXDIGIT ) )*
   # i.e. underscore is only permitted at most once in a row, and cannot be at either start or end.
 number -> "0x" number_hex  // FIXME: More prefixes
+expression -> number  // (literal) FIXME: So many more types of expression!

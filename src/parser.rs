@@ -19,7 +19,9 @@ use winnow::token::none_of;
 use winnow::token::one_of;
 use winnow::token::take_while;
 
+use crate::ast::Expression;
 use crate::ast::FileSpan;
+use crate::ast::LocatedExpression;
 
 type In<'is> = Stateful<LocatingSlice<&'is str>, &'is str>;
 
@@ -142,7 +144,7 @@ fn underscored<'s>(char_class: &'static [char]) -> impl ModalParser<In<'s>, (), 
         .value(())
 }
 
-fn number_hex(input: &mut In) -> ModalResult<(u16, Range<usize>)> {
+fn number_hex(input: &mut In) -> ModalResult<u16> {
     // Assumption: We already *know* and expect that what follows *must* be a hexadecimal number.
     // GRAMMAR: HEXDIGIT -> '0'..'9' | 'a'..'f' | 'A'..'F'
     // GRAMMAR: number_hex -> HEXDIGIT ( HEXDIGIT | ( '_' &HEXDIGIT ) )*
@@ -168,24 +170,30 @@ fn number_hex(input: &mut In) -> ModalResult<(u16, Range<usize>)> {
     .context(StrContext::Expected(StrContextValue::Description(
         "underscore (followed by a hexit)",
     )))
-    .with_span()
     .parse_next(input)
 }
 
-fn number(input: &mut In) -> ModalResult<(u16, Range<usize>)> {
+fn number<'s>(input: &mut In<'s>) -> ModalResult<(u16, FileSpan<'s>)> {
     // GRAMMAR: number -> "0x" number_hex  // FIXME: More prefixes
+    // TODO: Use dispatch and cut to select prefix
     preceded(
         "0x".context(StrContext::Label("number prefix"))
             .context(StrContext::Expected(StrContextValue::Description(
-                "0x (FIXME)",
+                "only 0x (FIXME)",
             ))),
         number_hex,
     )
-    // number_hex() indicates the span of hexadecimal digits,
-    // but number() wants to indicate the entire number including prefix:
-    .with_span()
-    .map(|with_wrong_span| (with_wrong_span.0.0, with_wrong_span.1))
+    .with_file_span()
     .parse_next(input)
+}
+
+fn expression<'s>(input: &mut In<'s>) -> ModalResult<LocatedExpression<'s>> {
+    // GRAMMAR: expression -> number  // (literal) FIXME: So many more types of expression!
+    let (number, span) = number(input)?;
+    Ok(LocatedExpression::new(
+        Expression::Literal(number),
+        span,
+    ))
 }
 
 #[cfg(test)]
@@ -394,7 +402,7 @@ mod tests {
     fn test_numhex_minimal_digit() {
         let mut input = stream_from("9yooo", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
-        assert_eq!(output, (9, 0..1));
+        assert_eq!(output, 9);
         assert_eq!(**input, "yooo");
     }
 
@@ -402,7 +410,7 @@ mod tests {
     fn test_numhex_minimal_hexit() {
         let mut input = stream_from("ayooo", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
-        assert_eq!(output, (10, 0..1));
+        assert_eq!(output, 10);
         assert_eq!(**input, "yooo");
     }
 
@@ -410,7 +418,7 @@ mod tests {
     fn test_numhex_max() {
         let mut input = stream_from("ffffun!", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
-        assert_eq!(output, (65535, 0..4));
+        assert_eq!(output, 65535);
         assert_eq!(**input, "un!");
     }
 
@@ -418,7 +426,7 @@ mod tests {
     fn test_numhex_several_zero() {
         let mut input = stream_from("00", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
-        assert_eq!(output, (0, 0..2));
+        assert_eq!(output, 0);
         assert_eq!(**input, "");
     }
 
@@ -474,7 +482,7 @@ mod tests {
     fn test_numhex_max_underscores() {
         let mut input = stream_from("f_a_c_e+", "<input>");
         let output = number_hex(&mut input).expect("parse failed");
-        assert_eq!(output, (0xFACE, 0..7));
+        assert_eq!(output, 0xFACE);
         assert_eq!(**input, "+");
     }
 
@@ -503,7 +511,7 @@ mod tests {
     fn test_number_hex_minimal() {
         let mut input = stream_from("0x1;", "<input>");
         let output = number(&mut input).expect("parse failed");
-        assert_eq!(output, (1, 0..3));
+        assert_eq!(output, (1, FileSpan::new("<input>", 0..3)));
         assert_eq!(**input, ";");
     }
 
@@ -512,7 +520,16 @@ mod tests {
         let input = stream_from("0p4", "<input>");
         let actual_err = number.parse(input).expect_err("parse succeeded?!");
         assert_eq!(actual_err.char_span(), 0..1);
-        let expected_err = "0p4\n^\ninvalid number prefix\nexpected 0x (FIXME)";
+        let expected_err = "0p4\n^\ninvalid number prefix\nexpected only 0x (FIXME)";
         assert_eq!(actual_err.to_string(), expected_err);
+    }
+
+    #[test]
+    fn test_expression_literal() {
+        let mut input = stream_from("0x123;", "<input>");
+        let output = expression(&mut input).expect("parse failed");
+        assert_eq!(output.span, FileSpan::new("<input>", 0..5));
+        assert_eq!(output.expr, Expression::Literal(0x123));
+        assert_eq!(**input, ";");
     }
 }
