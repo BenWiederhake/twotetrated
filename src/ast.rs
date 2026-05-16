@@ -107,3 +107,13 @@ pub enum Statement<'a> {
 }
 
 pub type LocatedStatement<'a> = Located<'a, Statement<'a>>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BracedBody<'a>(pub Vec<LocatedStatement<'a>>);
+
+impl<'a> Deref for BracedBody<'a> {
+    type Target = Vec<LocatedStatement<'a>>;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+pub type LocatedBracedBody<'a> = Located<'a, BracedBody<'a>>;

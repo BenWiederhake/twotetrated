@@ -12,6 +12,7 @@ use winnow::combinator::preceded;
 use winnow::combinator::impls::WithSpan;
 use winnow::combinator::repeat;
 //use winnow::combinator::seq;
+use winnow::combinator::terminated;
 use winnow::Result;
 use winnow::error::ContextError;
 use winnow::error::StrContext;
@@ -22,9 +23,11 @@ use winnow::token::none_of;
 use winnow::token::one_of;
 use winnow::token::take_while;
 
+use crate::ast::BracedBody;
 use crate::ast::Expression;
 use crate::ast::FileSpan;
 use crate::ast::Located;
+use crate::ast::LocatedBracedBody;
 use crate::ast::LocatedExpression;
 use crate::ast::LocatedStatement;
 use crate::ast::LocatedToken;
@@ -205,6 +208,7 @@ fn expression<'s>(input: &mut In<'s>) -> ModalResult<LocatedExpression<'s>> {
 }
 
 fn stmt_yield<'s>(input: &mut In<'s>) -> ModalResult<LocatedStatement<'s>> {
+    // GRAMMAR: statement -> "yield" ws expression ws ";"  // (yield) FIXME: So many more types of statement!
     let yield_token = word.verify(|located_word| located_word.value == "yield").parse_next(input)?;
     let expr = cut_err(delimited(
         whitespace,
@@ -212,7 +216,6 @@ fn stmt_yield<'s>(input: &mut In<'s>) -> ModalResult<LocatedStatement<'s>> {
         ";",
     ))
         .parse_next(input)?;
-    // GRAMMAR: statement -> "yield" ws* expression ws* ";"  // (yield) FIXME: So many more types of statement!
     Ok(LocatedStatement::new(
         Statement::Yield(expr),
         yield_token.span,
@@ -222,6 +225,22 @@ fn stmt_yield<'s>(input: &mut In<'s>) -> ModalResult<LocatedStatement<'s>> {
 fn statement<'s>(input: &mut In<'s>) -> ModalResult<LocatedStatement<'s>> {
     // Use alt() or something?
     stmt_yield(input)
+}
+
+fn braced_body<'s>(input: &mut In<'s>) -> ModalResult<LocatedBracedBody<'s>> {
+    // GRAMMAR: braced_body -> "{" ws (expression ws)* "}"
+    // TODO: Give context?
+    let opening_brace = "{".with_file_span().parse_next(input)?;
+    let statements = cut_err(delimited(
+        whitespace,
+        repeat(0.., terminated(statement, whitespace)),
+        "}",
+    ))
+        .parse_next(input)?;
+    Ok(LocatedBracedBody::new(
+        BracedBody(statements),
+        opening_brace.span,
+    ))
 }
 
 #[cfg(test)]
@@ -588,4 +607,25 @@ mod tests {
         // TODO: Test negative
     }
 
+    #[test]
+    fn test_bracedbody_yield() {
+        let mut input = stream_from("{   yield  0x123;  }Foobar", "<input>");
+        let output = braced_body(&mut input).expect("parse failed");
+        // The statement should point at the 'yield' keyword, not the expression!
+        assert_eq!(output.span, FileSpan::new("<input>", 0..1));
+        assert_eq!(**input, "Foobar");
+        assert_eq!(output.len(), 1);
+        let ls = &output[0];
+        assert_eq!(ls.span, FileSpan::new("<input>", 4..9));
+        let le = match &ls.value {
+            Statement::Yield(le) => le,
+            _ => { panic!("Should have been a yield statement?!"); }
+        };
+        assert_eq!(le.span, FileSpan::new("<input>", 11..16));
+        assert_eq!(**le, Expression::Literal(0x123));
+        // TODO: Test other statement types
+        // TODO: Test negative
+        // TODO: Trailing whitespace after each statement!
+        // TODO: Test whitespace-only!
+    }
 }
