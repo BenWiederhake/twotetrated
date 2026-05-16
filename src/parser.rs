@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::ops::Range;
 
 use winnow::prelude::*;
@@ -22,8 +24,10 @@ use winnow::token::take_while;
 
 use crate::ast::Expression;
 use crate::ast::FileSpan;
+use crate::ast::Located;
 use crate::ast::LocatedExpression;
 use crate::ast::LocatedStatement;
+use crate::ast::LocatedToken;
 use crate::ast::Statement;
 
 type In<'is> = Stateful<LocatingSlice<&'is str>, &'is str>;
@@ -43,16 +47,17 @@ where
     marker: core::marker::PhantomData<(In<'is>, O, E)>,
 }
 
-impl<'is, F, O, E> Parser<In<'is>, (O, FileSpan<'is>), E> for WithFileSpan<'is, F, O, E>
+impl<'is, F, O, E> Parser<In<'is>, Located<'is, O>, E> for WithFileSpan<'is, F, O, E>
 where
     F: Parser<In<'is>, (O, Range<usize>), E>,
+    O: Debug + Clone + PartialEq + Eq + Hash,
 {
     // TODO: Decide whether to mark as #[inline] (it's inline in WithSpan)
-    fn parse_next(&mut self, input: &mut In<'is>) -> Result<(O, FileSpan<'is>), E> {
+    fn parse_next(&mut self, input: &mut In<'is>) -> Result<Located<'is, O>, E> {
         //let start = input.current_token_start();
         self.parser.parse_next(input).map(move |output_tuple| {
             let (output, char_span) = output_tuple;
-            (
+            Located::new(
                 output,
                 FileSpan {
                     source: input.state,
@@ -112,7 +117,7 @@ fn whitespace(input: &mut In) -> ModalResult<()> {
     .parse_next(input)
 }
 
-fn word<'s>(input: &mut In<'s>) -> ModalResult<(&'s str, FileSpan<'s>)> {
+fn word<'s>(input: &mut In<'s>) -> ModalResult<LocatedToken<'s>> {
     // Heavily inspired by https://docs.rs/winnow/latest/winnow/_topic/language/index.html#identifiers
     // GRAMMAR: word -> ( ALPHA | '_' ) ( ALPHA | NUM | '_' )*
     (
@@ -176,7 +181,7 @@ fn number_hex(input: &mut In) -> ModalResult<u16> {
     .parse_next(input)
 }
 
-fn number<'s>(input: &mut In<'s>) -> ModalResult<(u16, FileSpan<'s>)> {
+fn number<'s>(input: &mut In<'s>) -> ModalResult<Located<'s, u16>> {
     // GRAMMAR: number -> "0x" number_hex  // FIXME: More prefixes
     // TODO: Use dispatch and cut to select prefix
     preceded(
@@ -192,15 +197,15 @@ fn number<'s>(input: &mut In<'s>) -> ModalResult<(u16, FileSpan<'s>)> {
 
 fn expression<'s>(input: &mut In<'s>) -> ModalResult<LocatedExpression<'s>> {
     // GRAMMAR: expression -> number  // (literal) FIXME: So many more types of expression!
-    let (number, span) = number(input)?;
+    let located_number = number(input)?;
     Ok(LocatedExpression::new(
-        Expression::Literal(number),
-        span,
+        Expression::Literal(located_number.value),
+        located_number.span,
     ))
 }
 
 fn stmt_yield<'s>(input: &mut In<'s>) -> ModalResult<LocatedStatement<'s>> {
-    let yield_token = word.verify(|(the_word, _)| *the_word == "yield").parse_next(input)?;
+    let yield_token = word.verify(|located_word| located_word.value == "yield").parse_next(input)?;
     let expr = cut_err(delimited(
         whitespace,
         expression,
@@ -210,7 +215,7 @@ fn stmt_yield<'s>(input: &mut In<'s>) -> ModalResult<LocatedStatement<'s>> {
     // GRAMMAR: statement -> "yield" ws* expression ws* ";"  // (yield) FIXME: So many more types of statement!
     Ok(LocatedStatement::new(
         Statement::Yield(expr),
-        yield_token.1, // FIXME: Located<&str>?
+        yield_token.span,
     ))
 }
 
@@ -371,7 +376,8 @@ mod tests {
     fn test_word_minimal_alpha() {
         let mut input = stream_from("a b c", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("a", FileSpan::new("<input>", 0..1)));
+        assert_eq!(output.value, "a");
+        assert_eq!(output.span, FileSpan::new("<input>", 0..1));
         assert_eq!(**input, " b c");
     }
 
@@ -379,7 +385,8 @@ mod tests {
     fn test_word_minimal_underscore() {
         let mut input = stream_from("_ _ _", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("_", FileSpan::new("<input>", 0..1)));
+        assert_eq!(output.value, "_");
+        assert_eq!(output.span, FileSpan::new("<input>", 0..1));
         assert_eq!(**input, " _ _");
     }
 
@@ -387,7 +394,8 @@ mod tests {
     fn test_word_minimal_alpha_digit() {
         let mut input = stream_from("r7+r8", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("r7", FileSpan::new("<input>", 0..2)));
+        assert_eq!(output.value, "r7");
+        assert_eq!(output.span, FileSpan::new("<input>", 0..2));
         assert_eq!(**input, "+r8");
     }
 
@@ -395,7 +403,8 @@ mod tests {
     fn test_word_short() {
         let mut input = stream_from("hello world", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("hello", FileSpan::new("<input>", 0..5)));
+        assert_eq!(output.value, "hello");
+        assert_eq!(output.span, FileSpan::new("<input>", 0..5));
         assert_eq!(**input, " world");
     }
 
@@ -403,7 +412,8 @@ mod tests {
     fn test_word_complex() {
         let mut input = stream_from("ComplicatedThing1234_XXXZZ.lol()", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("ComplicatedThing1234_XXXZZ", FileSpan::new("<input>", 0..26)));
+        assert_eq!(output.value, "ComplicatedThing1234_XXXZZ");
+        assert_eq!(output.span, FileSpan::new("<input>", 0..26));
         assert_eq!(**input, ".lol()");
     }
 
@@ -411,13 +421,15 @@ mod tests {
     fn test_word_space_word() {
         let mut input = stream_from("hello world", "<input>");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("hello", FileSpan::new("<input>", 0..5)));
+        assert_eq!(output.value, "hello");
+        assert_eq!(output.span, FileSpan::new("<input>", 0..5));
         assert_eq!(**input, " world");
         let output = whitespace(&mut input).expect("parse failed");
         assert_eq!(output, ());
         assert_eq!(**input, "world");
         let output = word(&mut input).expect("parse failed");
-        assert_eq!(output, ("world", FileSpan::new("<input>", 6..11)));
+        assert_eq!(output.value, "world");
+        assert_eq!(output.span, FileSpan::new("<input>", 6..11));
         assert_eq!(**input, "");
     }
 
@@ -534,7 +546,8 @@ mod tests {
     fn test_number_hex_minimal() {
         let mut input = stream_from("0x1;", "<input>");
         let output = number(&mut input).expect("parse failed");
-        assert_eq!(output, (1, FileSpan::new("<input>", 0..3)));
+        assert_eq!(output.value, 1);
+        assert_eq!(output.span, FileSpan::new("<input>", 0..3));
         assert_eq!(**input, ";");
     }
 

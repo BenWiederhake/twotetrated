@@ -77,6 +77,8 @@ impl<'a, T> Deref for Located<'a, T> where T: Debug + Clone + PartialEq + Eq + H
    fn deref(&self) -> &Self::Target { &self.value }
 }
 
+pub type LocatedToken<'a> = Located<'a, &'a str>;
+
 pub type LocatedExpression<'a> = Located<'a, Expression<'a>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
