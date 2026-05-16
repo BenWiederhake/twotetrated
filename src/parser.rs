@@ -4,6 +4,7 @@ use winnow::prelude::*;
 
 use winnow::combinator::alt;
 use winnow::combinator::cut_err;
+use winnow::combinator::delimited;
 use winnow::combinator::peek;
 use winnow::combinator::preceded;
 use winnow::combinator::impls::WithSpan;
@@ -22,6 +23,8 @@ use winnow::token::take_while;
 use crate::ast::Expression;
 use crate::ast::FileSpan;
 use crate::ast::LocatedExpression;
+use crate::ast::LocatedStatement;
+use crate::ast::Statement;
 
 type In<'is> = Stateful<LocatingSlice<&'is str>, &'is str>;
 
@@ -90,7 +93,7 @@ impl<'is, O, E, T: Sized + Parser<In<'is>, O, E>> WithFileSpanExt<'is, O, E, T> 
 //     .parse_next(input)
 // }
 
-fn comment(input: &mut In) -> Result<()> {
+fn comment(input: &mut In) -> ModalResult<()> {
     // GRAMMAR: comment -> "//" ( !'\r' !'\n' ANY )*
     // Intentional: Permit missing trailing \r / \n at EOF
     "//".context(StrContext::Label("comment marker"))
@@ -100,7 +103,7 @@ fn comment(input: &mut In) -> Result<()> {
     Ok(())
 }
 
-fn whitespace(input: &mut In) -> Result<()> {
+fn whitespace(input: &mut In) -> ModalResult<()> {
     // GRAMMAR: whitespace -> ( ' ' | '\t' | '\r' | '\n' | comment )*
     repeat::<_, _, (), _, _>(
         0..,
@@ -109,7 +112,7 @@ fn whitespace(input: &mut In) -> Result<()> {
     .parse_next(input)
 }
 
-fn word<'s>(input: &mut In<'s>) -> Result<(&'s str, FileSpan<'s>)> {
+fn word<'s>(input: &mut In<'s>) -> ModalResult<(&'s str, FileSpan<'s>)> {
     // Heavily inspired by https://docs.rs/winnow/latest/winnow/_topic/language/index.html#identifiers
     // GRAMMAR: word -> ( ALPHA | '_' ) ( ALPHA | NUM | '_' )*
     (
@@ -194,6 +197,26 @@ fn expression<'s>(input: &mut In<'s>) -> ModalResult<LocatedExpression<'s>> {
         Expression::Literal(number),
         span,
     ))
+}
+
+fn stmt_yield<'s>(input: &mut In<'s>) -> ModalResult<LocatedStatement<'s>> {
+    let yield_token = word.verify(|(the_word, _)| *the_word == "yield").parse_next(input)?;
+    let expr = cut_err(delimited(
+        whitespace,
+        expression,
+        ";",
+    ))
+        .parse_next(input)?;
+    // GRAMMAR: statement -> "yield" ws* expression ws* ";"  // (yield) FIXME: So many more types of statement!
+    Ok(LocatedStatement::new(
+        Statement::Yield(expr),
+        yield_token.1, // FIXME: Located<&str>?
+    ))
+}
+
+fn statement<'s>(input: &mut In<'s>) -> ModalResult<LocatedStatement<'s>> {
+    // Use alt() or something?
+    stmt_yield(input)
 }
 
 #[cfg(test)]
@@ -529,7 +552,27 @@ mod tests {
         let mut input = stream_from("0x123;", "<input>");
         let output = expression(&mut input).expect("parse failed");
         assert_eq!(output.span, FileSpan::new("<input>", 0..5));
-        assert_eq!(output.expr, Expression::Literal(0x123));
+        assert_eq!(*output, Expression::Literal(0x123));
         assert_eq!(**input, ";");
+        // TODO: Test other expression types
+        // TODO: Test negative
     }
+
+    #[test]
+    fn test_statement_yield() {
+        let mut input = stream_from("yield 0x123; Foobar", "<input>");
+        let output = statement(&mut input).expect("parse failed");
+        // The statement should point at the 'yield' keyword, not the expression!
+        assert_eq!(output.span, FileSpan::new("<input>", 0..5));
+        assert_eq!(**input, " Foobar");
+        if let Statement::Yield(le) = &*output {
+            assert_eq!(le.span, FileSpan::new("<input>", 6..11));
+            assert_eq!(**le, Expression::Literal(0x123));
+        } else {
+            panic!("Should have been a yield statement?!");
+        }
+        // TODO: Test other expression types
+        // TODO: Test negative
+    }
+
 }

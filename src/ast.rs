@@ -1,3 +1,6 @@
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::ops::Deref;
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -58,24 +61,47 @@ pub enum BinaryOperator {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct LocatedExpression<'a> {
-    pub expr: Expression<'a>,
+pub struct Located<'a, T> where T: Debug + Clone + PartialEq + Eq + Hash {
+    pub value: T,
     pub span: FileSpan<'a>,
 }
 
-impl<'a> LocatedExpression<'a> {
-    pub fn new(expr: Expression<'a>, span: FileSpan<'a>) -> Self {
-        Self { expr, span }
+impl<'a, T> Located<'a, T> where T: Debug + Clone + PartialEq + Eq + Hash {
+    pub fn new(value: T, span: FileSpan<'a>) -> Self {
+        Self { value, span }
     }
 }
+
+impl<'a, T> Deref for Located<'a, T> where T: Debug + Clone + PartialEq + Eq + Hash {
+   type Target = T;
+   fn deref(&self) -> &Self::Target { &self.value }
+}
+
+pub type LocatedExpression<'a> = Located<'a, Expression<'a>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expression<'a> {
     // If you add the ternary conditional, a puppy dies.
     Literal(u16),
     #[allow(dead_code)] Variable(&'a str),
-    //Unary(UnaryOperator, Box<LocatedExpression<'a>>),
+    #[allow(dead_code)] Unary(UnaryOperator, Box<LocatedExpression<'a>>),
     //Binary(Box<LocatedExpression<'a>>, BinaryOperator, Box<LocatedExpression<'a>>),
     //FunctionCall(&'a str, Vec<LocatedExpression<'a>>),
     //Member(Box<LocatedExpression<'a>>, &'a str),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Statement<'a> {
+    Yield(LocatedExpression<'a>),
+    Assign(Located<'a, &'a str>, LocatedExpression<'a>),
+    // Assignment
+    // Functioncall?!
+    // IfThen
+    // IfThenElse
+    // WhileDo
+    // Break
+    // Continue
+    // For
+}
+
+pub type LocatedStatement<'a> = Located<'a, Statement<'a>>;
