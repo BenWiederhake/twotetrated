@@ -117,3 +117,28 @@ impl<'a> Deref for BracedBody<'a> {
 }
 
 pub type LocatedBracedBody<'a> = Located<'a, BracedBody<'a>>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LocatedType<'a>(pub LocatedToken<'a>);
+// TODO: Generics would convert this to an enum?
+
+impl<'a> Deref for LocatedType<'a> {
+    type Target = LocatedToken<'a>;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LocatedVariableDecl<'a> {
+    pub type_: LocatedType<'a>,
+    pub variable_name: LocatedToken<'a>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FunctionItem<'a> {
+    pub name: LocatedToken<'a>,
+    pub argument_list: Vec<LocatedVariableDecl<'a>>,
+    pub return_declaration: Option<LocatedType<'a>>,
+    pub body: LocatedBracedBody<'a>,
+}
+
+pub type LocatedFunctionItem<'a> = Located<'a, FunctionItem<'a>>;

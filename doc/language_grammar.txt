@@ -8,3 +8,7 @@ number -> "0x" number_hex  // FIXME: More prefixes
 expression -> number  // (literal) FIXME: So many more types of expression!
 statement -> "yield" ws expression ws ";"  // (yield) FIXME: So many more types of statement!
 braced_body -> "{" ws (expression ws)* "}"
+identifier -> !reserved_word word
+typed_argument_list -> () // FIXME: Everything!
+return_decl -> "->" ws typename // FIXME: Everything!
+function_item -> "function" ws identifier ws "(" ws typed_argument_list ")" ws return_decl? ws braced_body
